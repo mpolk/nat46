@@ -1,0 +1,31 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/lib/modules/6.5.0-35-generic/build/include",
+                "/lib/modules/6.5.0-35-generic/build/arch/x86/include",
+                "/usr/src/linux-headers-6.5.0-35-generic/arch/x86/include/generated",
+                "/usr/src/linux-headers-6.5.0-35-generic/include/generated/uapi",
+                "/usr/src/linux-headers-6.5.0-35-generic/arch/x86/include/generated/uapi",
+                "/usr/src/linux-hwe-6.5-headers-6.5.0-35/include/uapi",
+                "/usr/src/linux-hwe-6.5-headers-6.5.0-35/arch/x86/include/uapi",
+                "/usr/src/linux-hwe-6.5-headers-6.5.0-35/include",
+                "/usr/lib/gcc/x86_64-linux-gnu/12/include"
+            ],
+            "defines": [],
+            "cStandard": "c17",
+            "cppStandard": "gnu++17",
+            "intelliSenseMode": "linux-gcc-x64",
+            "compilerArgs": [
+                "-nostdinc",
+                "-include",
+                "/usr/src/linux-hwe-6.5-headers-6.5.0-35/include/linux/kconfig.h",
+                "-include",
+                "/usr/src/linux-hwe-6.5-headers-6.5.0-35/include/linux/compiler_types.h"
+            ]
+        }
+    ],
+    "version": 4
+}

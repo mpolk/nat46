@@ -48,7 +48,8 @@
 #define NAT46_CONTROL_PROC_NAME "control"
 
 #ifndef NAT46_VERSION
-#define NAT46_VERSION __DATE__ " " __TIME__
+//#define NAT46_VERSION __DATE__ " " __TIME__
+#define NAT46_VERSION "0.1-mpolk"
 #endif
 
 MODULE_LICENSE("GPL");
