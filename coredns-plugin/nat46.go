@@ -2,6 +2,7 @@ package nat46
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/metrics"
@@ -20,14 +21,14 @@ type Nat46 struct {
 
 // ServeDNS implements the plugin.Handler interface. This method gets called when nat46 is used
 // in a Server.
-func (this Nat46) ServeDNS(ctx context.Context, responseWriter dns.ResponseWriter, request *dns.Msg) (int, error) {
+func (nat46 Nat46) ServeDNS(ctx context.Context, responseWriter dns.ResponseWriter, request *dns.Msg) (int, error) {
 	// This function could be simpler. I.e. just fmt.Println("nat46") here, but we want to show
 	// a slightly more complex example as to make this more interesting.
 	// Here we wrap the dns.ResponseWriter in a new ResponseWriter and call the next plugin, when the
 	// answer comes back, it will print "nat46".
 
 	// Debug log that we've have seen the query. This will only be shown when the debug plugin is loaded.
-	log.Info("Received response")
+	log.Info(fmt.Sprintf("Received request: %v", request.Question))
 
 	// Wrap.
 	pw := NewResponsePrinter(responseWriter)
@@ -36,11 +37,11 @@ func (this Nat46) ServeDNS(ctx context.Context, responseWriter dns.ResponseWrite
 	requestCount.WithLabelValues(metrics.WithServer(ctx)).Inc()
 
 	// Call next plugin (if any).
-	return plugin.NextOrFailure(this.Name(), this.Next, ctx, pw, request)
+	return plugin.NextOrFailure(nat46.Name(), nat46.Next, ctx, pw, request)
 }
 
 // Name implements the Handler interface.
-func (this Nat46) Name() string { return "nat46" }
+func (nat46 Nat46) Name() string { return "nat46" }
 
 // ResponsePrinter wrap a dns.ResponseWriter and will write nat46 to standard output when WriteMsg is called.
 type ResponsePrinter struct {
@@ -54,6 +55,6 @@ func NewResponsePrinter(w dns.ResponseWriter) *ResponsePrinter {
 
 // WriteMsg calls the underlying ResponseWriter's WriteMsg method and prints "nat46" to standard output.
 func (r *ResponsePrinter) WriteMsg(res *dns.Msg) error {
-	log.Info("next plugin done")
+	log.Info("return from the next plugin")
 	return r.ResponseWriter.WriteMsg(res)
 }

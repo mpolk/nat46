@@ -1,9 +1,9 @@
-*.o
-*.ko
-.*.o.*
-*.mod
-*.mod.*
-.*.cmd
-*.symvers
-*.order
+module/*.o
+module/*.ko
+module/.*.o.*
+module/*.mod
+module/*.mod.*
+module/.*.cmd
+module/*.symvers
+module/*.order
 
