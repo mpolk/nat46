@@ -1,8 +1,10 @@
 package nat46
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/metrics"
@@ -13,10 +15,29 @@ import (
 
 // Define log to be a logger with the plugin name in it. This way we can just use log.Info and
 // friends to log.
-var log = clog.NewWithPlugin("nat46")
+var log = clog.NewWithPlugin(PluginName)
 
 type Nat46 struct {
-	Next plugin.Handler
+	Next    plugin.Handler
+	domains []string
+}
+
+func NewNat46(domainsFileName string) (Nat46, error) {
+	domainsFile, err := os.Open(domainsFileName)
+	if err != nil {
+		return Nat46{}, plugin.Error(PluginName, err)
+	}
+
+	log.Debugf("Reading domains from %s", domainsFileName)
+	domains := []string{}
+	defer domainsFile.Close()
+	scanner := bufio.NewScanner(domainsFile)
+	for scanner.Scan() {
+		domain := scanner.Text()
+		log.Infof("nat46 domain: %s", domain)
+		domains = append(domains, domain)
+	}
+	return Nat46{domains: domains}, nil
 }
 
 // ServeDNS implements the plugin.Handler interface. This method gets called when nat46 is used
@@ -41,7 +62,7 @@ func (nat46 Nat46) ServeDNS(ctx context.Context, responseWriter dns.ResponseWrit
 }
 
 // Name implements the Handler interface.
-func (nat46 Nat46) Name() string { return "nat46" }
+func (nat46 Nat46) Name() string { return PluginName }
 
 // ResponsePrinter wrap a dns.ResponseWriter and will write nat46 to standard output when WriteMsg is called.
 type ResponsePrinter struct {
