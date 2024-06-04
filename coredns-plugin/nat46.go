@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -74,7 +75,7 @@ func (nat46 Nat46) ServeDNS(ctx context.Context, responseWriter dns.ResponseWrit
 	}
 
 	// Wrap.
-	pw := NewResponseInterceptor(responseWriter, req.QName())
+	pw := NewResponseInterceptor(nat46, responseWriter, req.QName())
 
 	// Export metric with the server label set to the current server handling the request.
 	requestCount.WithLabelValues(metrics.WithServer(ctx)).Inc()
@@ -130,13 +131,14 @@ func (nat46 *Nat46) requestShouldIntercept(req *request.Request) bool {
 
 // ResponseInterceptor wrap a dns.ResponseWriter and performs additional processing
 type ResponseInterceptor struct {
+	nat46 Nat46
 	dns.ResponseWriter
 	domain string
 }
 
 // NewResponseInterceptor returns ResponseWriter.
-func NewResponseInterceptor(w dns.ResponseWriter, domain string) *ResponseInterceptor {
-	return &ResponseInterceptor{ResponseWriter: w, domain: domain}
+func NewResponseInterceptor(nat46 Nat46, w dns.ResponseWriter, domain string) *ResponseInterceptor {
+	return &ResponseInterceptor{nat46: nat46, ResponseWriter: w, domain: domain}
 }
 
 // WriteMsg performs additional processing and then calls the underlying ResponseWriter's WriteMsg method.
@@ -144,9 +146,11 @@ func (interceptor *ResponseInterceptor) WriteMsg(resp *dns.Msg) error {
 	log.Debugf("Returned from the next plugin with the result: %v", resp)
 	for _, rr := range resp.Answer {
 		if rr.Header().Rrtype == dns.TypeA {
-			chunks := strings.Split(rr.String(), " ")
-			log.Debugf("RR: %v", chunks)
-			setupNat(interceptor.domain, chunks[len(chunks)-1])
+			chunks := regexp.MustCompile(`[\t ]+`).Split(rr.String(), -1)
+			for i := 0; i < len(chunks); i++ {
+				log.Debugf("RR[%d]: %s", i, chunks[i])
+			} //for
+			interceptor.nat46.setupNat(interceptor.domain, chunks[len(chunks)-1])
 		}
 	}
 
@@ -154,6 +158,6 @@ func (interceptor *ResponseInterceptor) WriteMsg(resp *dns.Msg) error {
 }
 
 // Install NAT46 rule for the specified "domain => ipv4-address" pair
-func setupNat(domain string, ipv4Addr string) {
+func (nat46 Nat46) setupNat(domain string, ipv4Addr string) {
 	log.Debugf("Setting up NAT46 for '%s => %s'", domain, ipv4Addr)
 }
