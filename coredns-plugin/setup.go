@@ -24,14 +24,25 @@ func setup(c *caddy.Controller) error {
 
 	domainsFileName := c.Val()
 	log.Debugf("domainsFileName: '%s'", domainsFileName)
-	log.Debugf("config.Root: '%s'", config.Root)
-	log.Debugf("c.File: '%v'", c.File())
 	if !filepath.IsAbs(domainsFileName) {
 		confDir := filepath.Dir(c.File())
-		domainsFileName = filepath.Join(confDir, domainsFileName)
+		domainsFileName = filepath.Clean(filepath.Join(confDir, domainsFileName))
 		log.Debugf("domainsFileName: '%s'", domainsFileName)
 	}
-	nat46, err := NewNat46(filepath.Clean(domainsFileName))
+
+	if !c.NextArg() {
+		return plugin.Error(PluginName, c.ArgErr())
+	}
+	ipv6Prefix := c.Val()
+	log.Debugf("ipv6Prefix: '%s'", ipv6Prefix)
+
+	nat46Device := "nat46"
+	if c.NextArg() {
+		nat46Device = c.Val()
+	}
+	log.Debugf("nat46Device: '%s'", nat46Device)
+
+	nat46, err := NewNat46(domainsFileName, ipv6Prefix, nat46Device)
 	if err != nil {
 		return plugin.Error(PluginName, err)
 	}

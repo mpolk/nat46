@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"net"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/metrics"
@@ -18,26 +21,37 @@ import (
 var log = clog.NewWithPlugin(PluginName)
 
 type Nat46 struct {
-	Next    plugin.Handler
-	domains []string
+	Next        plugin.Handler
+	domains     [][]string
+	ipv6Prefix  net.IPNet
+	nat46Device string
 }
 
-func NewNat46(domainsFileName string) (Nat46, error) {
+func NewNat46(domainsFileName string, ipv6Prefix string, nat46Device string) (Nat46, error) {
 	domainsFile, err := os.Open(domainsFileName)
 	if err != nil {
 		return Nat46{}, plugin.Error(PluginName, err)
 	}
 
 	log.Debugf("Reading domains from %s", domainsFileName)
-	domains := []string{}
+	domains := [][]string{}
 	defer domainsFile.Close()
 	scanner := bufio.NewScanner(domainsFile)
 	for scanner.Scan() {
-		domain := scanner.Text()
-		log.Infof("nat46 domain: %s", domain)
+		domain := strings.Split(scanner.Text(), ".")
+		slices.Reverse(domain)
+		log.Infof("nat46 domain: %v", domain)
 		domains = append(domains, domain)
 	}
-	return Nat46{domains: domains}, nil
+
+	_, prefix, err := net.ParseCIDR(ipv6Prefix)
+	if err != nil {
+		return Nat46{}, plugin.Error(PluginName, err)
+	}
+	log.Infof("IPV6 prefix: %v", prefix)
+	log.Infof("NAT46 deivice: '%s'", nat46Device)
+
+	return Nat46{domains: domains, ipv6Prefix: *prefix, nat46Device: nat46Device}, nil
 }
 
 // ServeDNS implements the plugin.Handler interface. This method gets called when nat46 is used
