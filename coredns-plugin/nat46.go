@@ -12,6 +12,7 @@ import (
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/metrics"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
+	"github.com/coredns/coredns/request"
 
 	"github.com/miekg/dns"
 )
@@ -20,14 +21,20 @@ import (
 // friends to log.
 var log = clog.NewWithPlugin(PluginName)
 
+// UpstreamInt wraps the Upstream API for dependency injection during testing
+type UpstreamInt interface {
+	Lookup(ctx context.Context, state request.Request, name string, typ uint16) (*dns.Msg, error)
+}
+
 type Nat46 struct {
 	Next        plugin.Handler
 	domains     [][]string
 	ipv6Prefix  net.IPNet
 	nat46Device string
+	upstream    UpstreamInt
 }
 
-func NewNat46(domainsFileName string, ipv6Prefix string, nat46Device string) (Nat46, error) {
+func NewNat46(domainsFileName string, ipv6Prefix string, nat46Device string, upstream UpstreamInt) (Nat46, error) {
 	domainsFile, err := os.Open(domainsFileName)
 	if err != nil {
 		return Nat46{}, plugin.Error(PluginName, err)
@@ -51,7 +58,7 @@ func NewNat46(domainsFileName string, ipv6Prefix string, nat46Device string) (Na
 	log.Infof("IPV6 prefix: %v", prefix)
 	log.Infof("NAT46 deivice: '%s'", nat46Device)
 
-	return Nat46{domains: domains, ipv6Prefix: *prefix, nat46Device: nat46Device}, nil
+	return Nat46{domains: domains, ipv6Prefix: *prefix, nat46Device: nat46Device, upstream: upstream}, nil
 }
 
 // ServeDNS implements the plugin.Handler interface. This method gets called when nat46 is used

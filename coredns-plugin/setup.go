@@ -6,6 +6,7 @@ import (
 	"github.com/coredns/caddy"
 	"github.com/coredns/coredns/core/dnsserver"
 	"github.com/coredns/coredns/plugin"
+	"github.com/coredns/coredns/plugin/pkg/upstream"
 )
 
 const PluginName = "nat46"
@@ -42,7 +43,7 @@ func setup(c *caddy.Controller) error {
 	}
 	log.Debugf("nat46Device: '%s'", nat46Device)
 
-	nat46, err := NewNat46(domainsFileName, ipv6Prefix, nat46Device)
+	nat46, err := NewNat46(domainsFileName, ipv6Prefix, nat46Device, upstream.New())
 	if err != nil {
 		return plugin.Error(PluginName, err)
 	}
