@@ -68,12 +68,13 @@ func (nat46 Nat46) ServeDNS(ctx context.Context, responseWriter dns.ResponseWrit
 	log.Debugf(fmt.Sprintf("Received request: %v", dnsMsg.Question))
 
 	// Don't proxy if we don't need to.
-	if !nat46.requestShouldIntercept(&request.Request{W: responseWriter, Req: dnsMsg}) {
+	req := request.Request{W: responseWriter, Req: dnsMsg}
+	if !nat46.requestShouldIntercept(&req) {
 		return nat46.Next.ServeDNS(ctx, responseWriter, dnsMsg)
 	}
 
 	// Wrap.
-	pw := NewResponsePrinter(responseWriter)
+	pw := NewResponseInterceptor(responseWriter, req.QName())
 
 	// Export metric with the server label set to the current server handling the request.
 	requestCount.WithLabelValues(metrics.WithServer(ctx)).Inc()
@@ -127,18 +128,32 @@ func (nat46 *Nat46) requestShouldIntercept(req *request.Request) bool {
 	return false
 }
 
-// ResponsePrinter wrap a dns.ResponseWriter and will write nat46 to standard output when WriteMsg is called.
-type ResponsePrinter struct {
+// ResponseInterceptor wrap a dns.ResponseWriter and performs additional processing
+type ResponseInterceptor struct {
 	dns.ResponseWriter
+	domain string
 }
 
-// NewResponsePrinter returns ResponseWriter.
-func NewResponsePrinter(w dns.ResponseWriter) *ResponsePrinter {
-	return &ResponsePrinter{ResponseWriter: w}
+// NewResponseInterceptor returns ResponseWriter.
+func NewResponseInterceptor(w dns.ResponseWriter, domain string) *ResponseInterceptor {
+	return &ResponseInterceptor{ResponseWriter: w, domain: domain}
 }
 
-// WriteMsg calls the underlying ResponseWriter's WriteMsg method and prints "nat46" to standard output.
-func (r *ResponsePrinter) WriteMsg(res *dns.Msg) error {
-	log.Info("return from the next plugin")
-	return r.ResponseWriter.WriteMsg(res)
+// WriteMsg performs additional processing and then calls the underlying ResponseWriter's WriteMsg method.
+func (interceptor *ResponseInterceptor) WriteMsg(resp *dns.Msg) error {
+	log.Debugf("Returned from the next plugin with the result: %v", resp)
+	for _, rr := range resp.Answer {
+		if rr.Header().Rrtype == dns.TypeA {
+			chunks := strings.Split(rr.String(), " ")
+			log.Debugf("RR: %v", chunks)
+			setupNat(interceptor.domain, chunks[len(chunks)-1])
+		}
+	}
+
+	return interceptor.ResponseWriter.WriteMsg(resp)
+}
+
+// Install NAT46 rule for the specified "domain => ipv4-address" pair
+func setupNat(domain string, ipv4Addr string) {
+	log.Debugf("Setting up NAT46 for '%s => %s'", domain, ipv4Addr)
 }
