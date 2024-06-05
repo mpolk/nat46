@@ -210,21 +210,33 @@ func (i *ResponseInterceptor) setupNat(ipv4Addr string) {
 	scanner := bufio.NewScanner(controlFile)
 	natDevicePresent := false
 	addDeviceCmd := fmt.Sprintf("add %s", i.nat46.nat46Device)
+	insertCmdPattern := regexp.MustCompile(fmt.Sprintf("insert %s .* remote.v4 %s", i.nat46.nat46Device, ipv4Addr))
+	removeCmd := ""
 	for scanner.Scan() {
 		line := scanner.Text()
 		log.Debugf("control file: %s", line)
 		if matches, _ := regexp.MatchString(addDeviceCmd, line); matches {
 			natDevicePresent = true
+			continue
 		}
-	}
+		if insertCmdPattern.MatchString(line) {
+			removeCmd = strings.Replace(line, "insert", "remove", 1)
+			continue
+		}
+	} //for
 
 	if !natDevicePresent {
 		log.Info(addDeviceCmd)
 		fmt.Fprintln(controlFile, addDeviceCmd)
 	}
 
-	confCmd := fmt.Sprintf("insert %s local.v6 %s local.style RFC6052 remote.v4 %s remote.v6 %s remote.style NONE",
+	if removeCmd != "" {
+		log.Info(removeCmd)
+		fmt.Fprintln(controlFile, removeCmd)
+	}
+
+	insertCmd := fmt.Sprintf("insert %s local.v6 %s local.style RFC6052 remote.v4 %s remote.v6 %s remote.style NONE",
 		i.nat46.nat46Device, &i.nat46.ipv6Prefix, ipv4Addr, ipv6Addr)
-	log.Info(confCmd)
-	fmt.Fprintln(controlFile, confCmd)
+	log.Info(insertCmd)
+	fmt.Fprintln(controlFile, insertCmd)
 } //setupNat
