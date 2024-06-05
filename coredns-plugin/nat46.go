@@ -9,10 +9,12 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/metrics"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
+	"github.com/coredns/coredns/plugin/pkg/response"
 	"github.com/coredns/coredns/request"
 
 	"github.com/miekg/dns"
@@ -27,6 +29,8 @@ type UpstreamInt interface {
 	Lookup(ctx context.Context, state request.Request, name string, typ uint16) (*dns.Msg, error)
 }
 
+var whitespace = regexp.MustCompile(`[\t ]+`)
+
 type Nat46 struct {
 	Next        plugin.Handler
 	domains     [][]string
@@ -35,10 +39,10 @@ type Nat46 struct {
 	upstream    UpstreamInt
 }
 
-func NewNat46(domainsFileName string, ipv6Prefix string, nat46Device string, upstream UpstreamInt) (Nat46, error) {
+func NewNat46(domainsFileName string, ipv6Prefix string, nat46Device string, upstream UpstreamInt) (*Nat46, error) {
 	domainsFile, err := os.Open(domainsFileName)
 	if err != nil {
-		return Nat46{}, plugin.Error(PluginName, err)
+		return nil, plugin.Error(PluginName, err)
 	}
 
 	log.Debugf("Reading domains from %s", domainsFileName)
@@ -54,12 +58,12 @@ func NewNat46(domainsFileName string, ipv6Prefix string, nat46Device string, ups
 
 	_, prefix, err := net.ParseCIDR(ipv6Prefix)
 	if err != nil {
-		return Nat46{}, plugin.Error(PluginName, err)
+		return nil, plugin.Error(PluginName, err)
 	}
 	log.Debugf("IPV6 prefix: %v", prefix)
 	log.Debugf("NAT46 deivice: '%s'", nat46Device)
 
-	return Nat46{domains: domains, ipv6Prefix: *prefix, nat46Device: nat46Device, upstream: upstream}, nil
+	return &Nat46{domains: domains, ipv6Prefix: *prefix, nat46Device: nat46Device, upstream: upstream}, nil
 }
 
 // ServeDNS implements the plugin.Handler interface. This method gets called when nat46 is used
@@ -75,7 +79,7 @@ func (nat46 Nat46) ServeDNS(ctx context.Context, responseWriter dns.ResponseWrit
 	}
 
 	// Wrap.
-	pw := NewResponseInterceptor(nat46, responseWriter, req.QName())
+	pw := NewResponseInterceptor(nat46, ctx, responseWriter)
 
 	// Export metric with the server label set to the current server handling the request.
 	requestCount.WithLabelValues(metrics.WithServer(ctx)).Inc()
@@ -94,7 +98,6 @@ func (nat46 Nat46) Name() string { return PluginName }
 // 3. The request is of class INET
 // 4. The requested name matches one of the NAT46 domain prefixes
 func (nat46 *Nat46) requestShouldIntercept(req *request.Request) bool {
-	// Make sure that request came in over IPv4
 	if req.Family() != 1 || req.QType() != dns.TypeA || req.QClass() != dns.ClassINET {
 		log.Debugf("Ignore queries of this family (%d), type (%d) or class(%d)", req.Family(), req.QType(), req.QClass())
 		return false
@@ -132,25 +135,30 @@ func (nat46 *Nat46) requestShouldIntercept(req *request.Request) bool {
 // ResponseInterceptor wrap a dns.ResponseWriter and performs additional processing
 type ResponseInterceptor struct {
 	nat46 Nat46
+	ctx   context.Context
 	dns.ResponseWriter
-	domain string
 }
 
 // NewResponseInterceptor returns ResponseWriter.
-func NewResponseInterceptor(nat46 Nat46, w dns.ResponseWriter, domain string) *ResponseInterceptor {
-	return &ResponseInterceptor{nat46: nat46, ResponseWriter: w, domain: domain}
+func NewResponseInterceptor(nat46 Nat46, ctx context.Context, w dns.ResponseWriter) *ResponseInterceptor {
+	return &ResponseInterceptor{nat46: nat46, ctx: ctx, ResponseWriter: w}
 }
 
 // WriteMsg performs additional processing and then calls the underlying ResponseWriter's WriteMsg method.
 func (interceptor *ResponseInterceptor) WriteMsg(resp *dns.Msg) error {
 	log.Debugf("Returned from the next plugin with the result: %v", resp)
+	ty, _ := response.Typify(resp, time.Now().UTC())
+	if ty != response.NoError {
+		return nil
+	}
+
 	for _, rr := range resp.Answer {
 		if rr.Header().Rrtype == dns.TypeA {
-			chunks := regexp.MustCompile(`[\t ]+`).Split(rr.String(), -1)
+			chunks := whitespace.Split(rr.String(), -1)
 			for i := 0; i < len(chunks); i++ {
 				log.Debugf("RR[%d]: %s", i, chunks[i])
 			} //for
-			interceptor.nat46.setupNat(interceptor.domain, chunks[len(chunks)-1])
+			interceptor.nat46.setupNat(resp, interceptor, chunks[len(chunks)-1])
 		}
 	}
 
@@ -158,6 +166,27 @@ func (interceptor *ResponseInterceptor) WriteMsg(resp *dns.Msg) error {
 }
 
 // Install NAT46 rule for the specified "domain => ipv4-address" pair
-func (nat46 Nat46) setupNat(domain string, ipv4Addr string) {
-	log.Debugf("Setting up NAT46 for '%s => %s'", domain, ipv4Addr)
+func (nat46 Nat46) setupNat(originalResponse *dns.Msg, interceptor *ResponseInterceptor, ipv4Addr string) {
+	go func() {
+		req := request.Request{W: interceptor.ResponseWriter, Req: originalResponse}
+		domain := req.QName()
+		log.Debugf("About to setup NAT46 for '%s' (%s)", domain, ipv4Addr)
+		resp, err := nat46.upstream.Lookup(interceptor.ctx, req, req.Name(), dns.TypeAAAA)
+		log.Debugf("Received response for the secondary query: %v", resp)
+		if err != nil {
+			log.Debugf("...failed to learn target IPv6 address, bailing out")
+			return
+		}
+
+		for _, rr := range resp.Answer {
+			if rr.Header().Rrtype == dns.TypeAAAA {
+				chunks := whitespace.Split(rr.String(), -1)
+				for i := 0; i < len(chunks); i++ {
+					log.Debugf("RR[%d]: %s", i, chunks[i])
+				} //for
+				ipv6Addr := chunks[len(chunks)-1]
+				log.Infof("Setting up NAT46 for '%s': %s => %s'", domain, ipv4Addr, ipv6Addr)
+			}
+		}
+	}()
 }
