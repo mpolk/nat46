@@ -207,11 +207,14 @@ func (i *ResponseInterceptor) setupNat(ipv4Addr string) {
 	}
 
 	defer controlFile.Close()
-	scanner := bufio.NewScanner(controlFile)
 	natDevicePresent := false
 	addDeviceCmd := fmt.Sprintf("add %s", i.nat46.nat46Device)
 	insertCmdPattern := regexp.MustCompile(fmt.Sprintf("insert %s .* remote.v4 %s", i.nat46.nat46Device, ipv4Addr))
+	localV6Pattern := regexp.MustCompile(fmt.Sprintf("local.v6 %s", &i.nat46.ipv6Prefix))
+	remoteV6Pattern := regexp.MustCompile(fmt.Sprintf("remote.v6 %s", ipv6Addr))
 	removeCmd := ""
+
+	scanner := bufio.NewScanner(controlFile)
 	for scanner.Scan() {
 		line := scanner.Text()
 		log.Debugf("control file: %s", line)
@@ -220,6 +223,10 @@ func (i *ResponseInterceptor) setupNat(ipv4Addr string) {
 			continue
 		}
 		if insertCmdPattern.MatchString(line) {
+			if localV6Pattern.MatchString(line) && remoteV6Pattern.MatchString(line) {
+				log.Debug("Rule already configured, won't do anything")
+				return
+			}
 			removeCmd = strings.Replace(line, "insert", "remove", 1)
 			continue
 		}
