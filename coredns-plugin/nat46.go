@@ -31,6 +31,8 @@ type UpstreamInt interface {
 
 var whitespace = regexp.MustCompile(`[\t ]+`)
 
+const modControlFile = "/proc/net/nat46/control"
+
 type Nat46 struct {
 	Next        plugin.Handler
 	domains     [][]string
@@ -132,30 +134,6 @@ func (nat46 *Nat46) requestShouldIntercept(req *request.Request) bool {
 	return false
 }
 
-// Install NAT46 rule for the specified "domain => ipv4-address" pair
-func (nat46 Nat46) setupNat(interceptor *ResponseInterceptor, ipv4Addr string) {
-	req := request.Request{W: interceptor.ResponseWriter, Req: interceptor.originalRequest}
-	domain := req.QName()
-	log.Debugf("About to setup NAT46 for '%s' (%s)", domain, ipv4Addr)
-	resp, err := nat46.upstream.Lookup(interceptor.ctx, req, req.Name(), dns.TypeAAAA)
-	log.Debugf("Received response for the secondary query: %v", resp)
-	if err != nil {
-		log.Debugf("...failed to learn target IPv6 address, bailing out")
-		return
-	}
-
-	for _, rr := range resp.Answer {
-		if rr.Header().Rrtype == dns.TypeAAAA {
-			chunks := whitespace.Split(rr.String(), -1)
-			for i := 0; i < len(chunks); i++ {
-				log.Debugf("RR[%d]: %s", i, chunks[i])
-			} //for
-			ipv6Addr := chunks[len(chunks)-1]
-			log.Infof("Setting up NAT46 for '%s': %s => %s", domain, ipv4Addr, ipv6Addr)
-		}
-	}
-}
-
 // ResponseInterceptor wrap a dns.ResponseWriter and performs additional processing
 type ResponseInterceptor struct {
 	nat46           *Nat46
@@ -165,7 +143,10 @@ type ResponseInterceptor struct {
 }
 
 // NewResponseInterceptor returns ResponseWriter.
-func NewResponseInterceptor(nat46 *Nat46, ctx context.Context, originalRequest *dns.Msg, w dns.ResponseWriter) *ResponseInterceptor {
+func NewResponseInterceptor(nat46 *Nat46,
+	ctx context.Context,
+	originalRequest *dns.Msg,
+	w dns.ResponseWriter) *ResponseInterceptor {
 	return &ResponseInterceptor{nat46: nat46, ctx: ctx, originalRequest: originalRequest, ResponseWriter: w}
 }
 
@@ -180,13 +161,52 @@ func (interceptor *ResponseInterceptor) WriteMsg(resp *dns.Msg) error {
 	for _, rr := range resp.Answer {
 		if rr.Header().Rrtype == dns.TypeA {
 			chunks := whitespace.Split(rr.String(), -1)
-			for i := 0; i < len(chunks); i++ {
-				log.Debugf("RR[%d]: %s", i, chunks[i])
-			} //for
-			ipv4Address := chunks[len(chunks)-1]
-			go interceptor.nat46.setupNat(interceptor, ipv4Address)
+			ipv4Addr := chunks[len(chunks)-1]
+			go interceptor.setupNat(ipv4Addr)
 		}
 	}
 
 	return interceptor.ResponseWriter.WriteMsg(resp)
-}
+} //WriteMsg
+
+// Install NAT46 rule for the specified "domain => ipv4-address" pair
+func (i *ResponseInterceptor) setupNat(ipv4Addr string) {
+	req := request.Request{W: i.ResponseWriter, Req: i.originalRequest}
+	domain := req.QName()
+	log.Debugf("About to setup NAT46 for '%s' (%s)", domain, ipv4Addr)
+	resp, err := i.nat46.upstream.Lookup(i.ctx, req, req.Name(), dns.TypeAAAA)
+	log.Debugf("Received response for the secondary query: %v", resp)
+	if err != nil {
+		log.Warningf("...failed to learn target IPv6 address, bailing out")
+		return
+	}
+	ty, _ := response.Typify(resp, time.Now().UTC())
+	if ty != response.NoError {
+		log.Warningf("...failed to learn target IPv6 address, bailing out")
+		return
+	}
+
+	ipv6Addr := ""
+	for _, rr := range resp.Answer {
+		if rr.Header().Rrtype == dns.TypeAAAA {
+			chunks := whitespace.Split(rr.String(), -1)
+			ipv6Addr = chunks[len(chunks)-1]
+			break
+		} //if
+	}
+
+	if ipv6Addr == "" {
+		return
+	}
+
+	log.Infof("Setting up NAT46 for '%s': %s => %s", domain, ipv4Addr, ipv6Addr)
+	controlFile, err := os.OpenFile(modControlFile, os.O_RDWR, 0)
+	if err != nil {
+		log.Error("Cannot open NAT46 module control file!")
+		return
+	}
+	confCmd := fmt.Sprintf("insert %s local.v6 %s local.style RFC6052 remote.v4 %s remote.v6 %s remote.style NONE",
+		i.nat46.nat46Device, &i.nat46.ipv6Prefix, ipv4Addr, ipv6Addr)
+	log.Info(confCmd)
+	fmt.Fprintln(controlFile, confCmd)
+} //setupNat
