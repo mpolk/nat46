@@ -205,6 +205,24 @@ func (i *ResponseInterceptor) setupNat(ipv4Addr string) {
 		log.Error("Cannot open NAT46 module control file!")
 		return
 	}
+
+	defer controlFile.Close()
+	scanner := bufio.NewScanner(controlFile)
+	natDevicePresent := false
+	addDeviceCmd := fmt.Sprintf("add %s", i.nat46.nat46Device)
+	for scanner.Scan() {
+		line := scanner.Text()
+		log.Debugf("control file: %s", line)
+		if matches, _ := regexp.MatchString(addDeviceCmd, line); matches {
+			natDevicePresent = true
+		}
+	}
+
+	if !natDevicePresent {
+		log.Info(addDeviceCmd)
+		fmt.Fprintln(controlFile, addDeviceCmd)
+	}
+
 	confCmd := fmt.Sprintf("insert %s local.v6 %s local.style RFC6052 remote.v4 %s remote.v6 %s remote.style NONE",
 		i.nat46.nat46Device, &i.nat46.ipv6Prefix, ipv4Addr, ipv6Addr)
 	log.Info(confCmd)
