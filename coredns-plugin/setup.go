@@ -18,30 +18,45 @@ func init() { plugin.Register(PluginName, setup) }
 // for parsing any extra options the nat46 plugin may have. The first token this function sees is "nat46".
 func setup(c *caddy.Controller) error {
 	config := dnsserver.GetConfig(c)
+	nat46Device := ""
+	domainsFileName := ""
+	ipv6Prefix := ""
+
 	c.Next() // Ignore "nat46" and give us the next token.
-	if !c.NextArg() {
-		return plugin.Error(PluginName, c.ArgErr())
-	}
+	for c.NextBlock() {
+		switch c.Val() {
+		case "domains":
+			if !c.NextArg() {
+				return c.ArgErr()
+			}
+			domainsFileName = c.Val()
+			log.Debugf("domainsFileName: '%s'", domainsFileName)
+			if !filepath.IsAbs(domainsFileName) {
+				confDir := filepath.Dir(c.File())
+				domainsFileName = filepath.Clean(filepath.Join(confDir, domainsFileName))
+				log.Debugf("domainsFileName: '%s'", domainsFileName)
+			}
 
-	domainsFileName := c.Val()
-	log.Debugf("domainsFileName: '%s'", domainsFileName)
-	if !filepath.IsAbs(domainsFileName) {
-		confDir := filepath.Dir(c.File())
-		domainsFileName = filepath.Clean(filepath.Join(confDir, domainsFileName))
-		log.Debugf("domainsFileName: '%s'", domainsFileName)
-	}
+		case "prefix":
+			fallthrough
+		case "nsp":
+			if !c.NextArg() {
+				return plugin.Error(PluginName, c.ArgErr())
+			}
+			ipv6Prefix = c.Val()
+			log.Debugf("ipv6Prefix: '%s'", ipv6Prefix)
 
-	if !c.NextArg() {
-		return plugin.Error(PluginName, c.ArgErr())
-	}
-	ipv6Prefix := c.Val()
-	log.Debugf("ipv6Prefix: '%s'", ipv6Prefix)
+		case "device":
+			if !c.NextArg() {
+				return plugin.Error(PluginName, c.ArgErr())
+			}
+			nat46Device = c.Val()
+			log.Debugf("nat46Device: '%s'", nat46Device)
 
-	nat46Device := "nat46"
-	if c.NextArg() {
-		nat46Device = c.Val()
-	}
-	log.Debugf("nat46Device: '%s'", nat46Device)
+		default:
+			return plugin.Error(PluginName, c.Errf("unknown property '%s'", c.Val()))
+		} //switch
+	} //for
 
 	nat46, err := NewNat46(domainsFileName, ipv6Prefix, nat46Device, upstream.New())
 	if err != nil {

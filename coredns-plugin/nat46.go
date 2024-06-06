@@ -3,6 +3,7 @@ package nat46
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -47,17 +48,26 @@ func NewNat46(domainsFileName string, ipv6Prefix string, nat46Device string, ups
 		return nil, plugin.Error(PluginName, err)
 	}
 
-	log.Debugf("Reading domains from %s", domainsFileName)
-	domains := [][]string{}
-	defer domainsFile.Close()
-	scanner := bufio.NewScanner(domainsFile)
-	for scanner.Scan() {
-		domain := strings.Split(scanner.Text(), ".")
-		slices.Reverse(domain)
-		log.Debugf("nat46 domain: %v", domain)
-		domains = append(domains, domain)
+	if nat46Device == "" {
+		nat46Device = "nat46"
 	}
 
+	domains := [][]string{}
+	if domainsFileName != "" {
+		log.Debugf("Reading domains from %s", domainsFileName)
+		defer domainsFile.Close()
+		scanner := bufio.NewScanner(domainsFile)
+		for scanner.Scan() {
+			domain := strings.Split(scanner.Text(), ".")
+			slices.Reverse(domain)
+			log.Debugf("nat46 domain: %v", domain)
+			domains = append(domains, domain)
+		}
+	} //if
+
+	if ipv6Prefix == "" {
+		return nil, plugin.Error(PluginName, errors.New("IPv6 network specific prefix is not defined"))
+	}
 	_, prefix, err := net.ParseCIDR(ipv6Prefix)
 	if err != nil {
 		return nil, plugin.Error(PluginName, err)
@@ -103,6 +113,11 @@ func (nat46 *Nat46) requestShouldIntercept(req *request.Request) bool {
 	if req.Family() != 1 || req.QType() != dns.TypeA || req.QClass() != dns.ClassINET {
 		log.Debugf("Ignore queries of this family (%d), type (%d) or class(%d)", req.Family(), req.QType(), req.QClass())
 		return false
+	}
+
+	if len(nat46.domains) == 0 {
+		log.Debug("Should NAT any domain, particularly this one")
+		return true
 	}
 
 	chunks := strings.Split(req.QName(), ".")
