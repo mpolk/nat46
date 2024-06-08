@@ -2,6 +2,7 @@ package nat46
 
 import (
 	"path/filepath"
+	"strings"
 
 	"github.com/coredns/caddy"
 	"github.com/coredns/coredns/core/dnsserver"
@@ -21,6 +22,7 @@ func setup(c *caddy.Controller) error {
 	nat46Device := ""
 	domainsFileName := ""
 	ipv6Prefix := ""
+	postInstallCmds := []string{}
 
 	c.Next() // Ignore "nat46" and give us the next token.
 	for c.NextBlock() {
@@ -53,12 +55,18 @@ func setup(c *caddy.Controller) error {
 			nat46Device = c.Val()
 			log.Debugf("nat46Device: '%s'", nat46Device)
 
+		case "postinstall":
+			fallthrough
+		case "post-install":
+			cmd := strings.Join(c.RemainingArgs(), " ")
+			postInstallCmds = append(postInstallCmds, cmd)
+
 		default:
 			return plugin.Error(PluginName, c.Errf("unknown property '%s'", c.Val()))
 		} //switch
 	} //for
 
-	nat46, err := NewNat46(domainsFileName, ipv6Prefix, nat46Device, upstream.New())
+	nat46, err := NewNat46(domainsFileName, ipv6Prefix, nat46Device, postInstallCmds, upstream.New())
 	if err != nil {
 		return plugin.Error(PluginName, err)
 	}

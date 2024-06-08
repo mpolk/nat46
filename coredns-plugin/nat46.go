@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
@@ -35,14 +36,17 @@ var whitespace = regexp.MustCompile(`[\t ]+`)
 const modControlFile = "/proc/net/nat46/control"
 
 type Nat46 struct {
-	Next        plugin.Handler
-	domains     [][]string
-	ipv6Prefix  net.IPNet
-	nat46Device string
-	upstream    UpstreamInt
+	Next            plugin.Handler
+	domains         [][]string
+	ipv6Prefix      net.IPNet
+	nat46Device     string
+	postInstallCmds []string
+	upstream        UpstreamInt
 }
 
-func NewNat46(domainsFileName string, ipv6Prefix string, nat46Device string, upstream UpstreamInt) (*Nat46, error) {
+func NewNat46(domainsFileName string, ipv6Prefix string, nat46Device string,
+	postInstallCmds []string, upstream UpstreamInt) (*Nat46, error) {
+
 	domainsFile, err := os.Open(domainsFileName)
 	if err != nil {
 		return nil, plugin.Error(PluginName, err)
@@ -75,8 +79,9 @@ func NewNat46(domainsFileName string, ipv6Prefix string, nat46Device string, ups
 	log.Debugf("IPV6 prefix: %v", prefix)
 	log.Debugf("NAT46 deivice: '%s'", nat46Device)
 
-	return &Nat46{domains: domains, ipv6Prefix: *prefix, nat46Device: nat46Device, upstream: upstream}, nil
-}
+	return &Nat46{domains: domains, ipv6Prefix: *prefix, nat46Device: nat46Device,
+		postInstallCmds: postInstallCmds, upstream: upstream}, nil
+} //NewNat46
 
 // ServeDNS implements the plugin.Handler interface. This method gets called when nat46 is used
 // in a Server.
@@ -98,7 +103,7 @@ func (nat46 Nat46) ServeDNS(ctx context.Context, responseWriter dns.ResponseWrit
 
 	// Call next plugin (if any).
 	return plugin.NextOrFailure(nat46.Name(), nat46.Next, ctx, pw, reqMsg)
-}
+} //ServeDNS
 
 // Name implements the Handler interface.
 func (nat46 Nat46) Name() string { return PluginName }
@@ -147,7 +152,7 @@ func (nat46 *Nat46) requestShouldIntercept(req *request.Request) bool {
 
 	log.Debug("Query does not match any NATted domain, ignore it")
 	return false
-}
+} //requestShouldIntercept
 
 // ResponseInterceptor wrap a dns.ResponseWriter and performs additional processing
 type ResponseInterceptor struct {
@@ -163,7 +168,7 @@ func NewResponseInterceptor(nat46 *Nat46,
 	originalRequest *dns.Msg,
 	w dns.ResponseWriter) *ResponseInterceptor {
 	return &ResponseInterceptor{nat46: nat46, ctx: ctx, originalRequest: originalRequest, ResponseWriter: w}
-}
+} //NewResponseInterceptor
 
 // WriteMsg performs additional processing and then calls the underlying ResponseWriter's WriteMsg method.
 func (interceptor *ResponseInterceptor) WriteMsg(resp *dns.Msg) error {
@@ -250,15 +255,37 @@ func (i *ResponseInterceptor) setupNat(ipv4Addr string) {
 	if !natDevicePresent {
 		log.Info(addDeviceCmd)
 		fmt.Fprintln(controlFile, addDeviceCmd)
-	}
+		cmd := fmt.Sprintf("ip link set dev %s up", i.nat46.nat46Device)
+		log.Info(cmd)
+		chunks := whitespace.Split(cmd, -1)
+		err := exec.Command(chunks[0], chunks[1:]...).Run()
+		if err != nil {
+			plugin.Error(PluginName, err)
+		} //if
+	} //if
 
 	if removeCmd != "" {
 		log.Info(removeCmd)
 		fmt.Fprintln(controlFile, removeCmd)
-	}
+	} //if
 
 	insertCmd := fmt.Sprintf("insert %s local.v6 %s local.style RFC6052 remote.v4 %s remote.v6 %s remote.style NONE",
 		i.nat46.nat46Device, &i.nat46.ipv6Prefix, ipv4Addr, ipv6Addr)
 	log.Info(insertCmd)
 	fmt.Fprintln(controlFile, insertCmd)
+
+	for _, cmdTemplate := range i.nat46.postInstallCmds {
+		cmd := strings.ReplaceAll(cmdTemplate, "{ipv4}", ipv4Addr)
+		cmd = strings.ReplaceAll(cmd, "{ipv6}", ipv6Addr)
+		cmd = strings.ReplaceAll(cmd, "{nsp}", i.nat46.ipv6Prefix.String())
+		cmd = strings.ReplaceAll(cmd, "{prefix}", i.nat46.ipv6Prefix.String())
+		cmd = strings.ReplaceAll(cmd, "{device}", i.nat46.nat46Device)
+		cmd = strings.ReplaceAll(cmd, "{nat46device}", i.nat46.nat46Device)
+		log.Info(cmd)
+		chunks := whitespace.Split(cmd, -1)
+		err := exec.Command(chunks[0], chunks[1:]...).Run()
+		if err != nil {
+			plugin.Error(PluginName, err)
+		} //if
+	} //for
 } //setupNat
