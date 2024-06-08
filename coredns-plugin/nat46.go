@@ -47,17 +47,17 @@ type Nat46 struct {
 func NewNat46(domainsFileName string, ipv6Prefix string, nat46Device string,
 	postInstallCmds []string, upstream UpstreamInt) (*Nat46, error) {
 
-	domainsFile, err := os.Open(domainsFileName)
-	if err != nil {
-		return nil, plugin.Error(PluginName, err)
-	}
-
 	if nat46Device == "" {
 		nat46Device = "nat46"
 	}
 
 	domains := [][]string{}
 	if domainsFileName != "" {
+		domainsFile, err := os.Open(domainsFileName)
+		if err != nil {
+			return nil, plugin.Error(PluginName, err)
+		}
+
 		log.Debugf("Reading domains from %s", domainsFileName)
 		defer domainsFile.Close()
 		scanner := bufio.NewScanner(domainsFile)
