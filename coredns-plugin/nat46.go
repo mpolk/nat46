@@ -269,7 +269,7 @@ func (i *ResponseInterceptor) setupNat(ipv4Addr string) {
 		fmt.Fprintln(controlFile, removeCmd)
 	} //if
 
-	insertCmd := fmt.Sprintf("insert %s local.v6 %s local.style RFC6052 remote.v4 %s remote.v6 %s remote.style NONE",
+	insertCmd := fmt.Sprintf("insert %s local.v6 %s local.style RFC6052 remote.v4 %s/32 remote.v6 %s/128 remote.style NONE",
 		i.nat46.nat46Device, &i.nat46.ipv6Prefix, ipv4Addr, ipv6Addr)
 	log.Info(insertCmd)
 	fmt.Fprintln(controlFile, insertCmd)
